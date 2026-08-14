@@ -18,35 +18,35 @@ async function sourceFiles(directory) {
   return files;
 }
 
-test("repository contains no elevated Supabase key or service-role JWT", async () => {
+test("repository contains no privileged credential material", async () => {
   const files = await sourceFiles(root);
   for (const file of files) {
     const contents = await readFile(file, "utf8").catch(() => "");
-    assert.doesNotMatch(contents, /sb_secret_[A-Za-z0-9_-]{12,}/, `${file} contains a secret key`);
-
-    for (const token of contents.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g) ?? []) {
-      const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-      assert.notEqual(payload.role, "service_role", `${file} contains a service_role JWT`);
-    }
+    assert.doesNotMatch(contents, /-----BEGIN (RSA |EC |)PRIVATE KEY-----/, `${file} contains a private key`);
+    assert.doesNotMatch(contents, /"private_key"\s*:/, `${file} contains a service-account key`);
   }
 });
 
-test("database migration includes non-negotiable security invariants", async () => {
-  const sql = await readFile(path.join(root, "supabase/migrations/20260813220000_initial_booking_system.sql"), "utf8");
-  assert.match(sql, /appointments_no_overlapping_scheduled/);
-  assert.match(sql, /exclude using gist/);
-  assert.match(sql, /alter table public\.appointments enable row level security/);
-  assert.match(sql, /revoke all on all tables in schema public from anon, authenticated/);
-  assert.match(sql, /if not public\.is_admin\(\)/);
-  assert.match(sql, /set search_path = pg_catalog, public/);
+test("Firestore rules are deny-by-default and protect personal data", async () => {
+  const rules = await readFile(path.join(root, "firestore.rules"), "utf8");
+  assert.match(rules, /function isAdmin\(\)/);
+  assert.match(rules, /match \/appointments\/\{appointmentId\}/);
+  assert.match(rules, /allow read: if isAdmin\(\)/);
+  assert.match(rules, /validPublicSlotBooking/);
+  assert.match(rules, /getAfter/);
+  assert.match(rules, /keys\(\)\.hasOnly/);
+  assert.match(rules, /match \/\{document=\*\*\}/);
+  assert.match(rules, /allow read, write: if false/);
 });
 
-test("admin sessions are tab-scoped and production HTML receives a CSP", async () => {
-  const client = await readFile(path.join(root, "lib/supabase.ts"), "utf8");
+test("booking is transactional and admin sessions are tab-scoped", async () => {
+  const booking = await readFile(path.join(root, "lib/firebase-booking.ts"), "utf8");
+  const client = await readFile(path.join(root, "lib/firebase.ts"), "utf8");
   const layout = await readFile(path.join(root, "app/layout.tsx"), "utf8");
-  assert.match(client, /window\.sessionStorage/);
-  assert.doesNotMatch(client, /window\.localStorage/);
+  assert.match(booking, /runTransaction/);
+  assert.match(booking, /state !== "open"/);
+  assert.match(client, /browserSessionPersistence/);
   assert.match(layout, /Content-Security-Policy/);
   assert.match(layout, /object-src 'none'/);
-  assert.match(layout, /connect-src 'self' https:\/\/yhfndzlfkjzpxerkmdcd\.supabase\.co/);
+  assert.match(layout, /googleapis\.com/);
 });

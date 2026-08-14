@@ -8,14 +8,15 @@
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
-    "build": "bash scripts/build-verified.sh",
+    "build": "next build",
+    "build:pages": "GITHUB_PAGES=true PAGES_BASE_PATH=/barbearialuiz NEXT_PUBLIC_BASE_PATH=/barbearialuiz next build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "NEXT_PUBLIC_FIREBASE_API_KEY=test-key NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=test.firebaseapp.com NEXT_PUBLIC_FIREBASE_PROJECT_ID=test-project NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=test.firebasestorage.app NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789 NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abcdef npm run build:pages && node --test tests/*.test.mjs",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.112.3",
+    "firebase": "^12.1.0",
     "lucide-react": "0.468.0",
     "next": "16.3.1",
     "react": "19.2.8",

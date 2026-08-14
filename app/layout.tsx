@@ -24,8 +24,9 @@ const contentSecurityPolicy = [
   "img-src 'self' data:",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline'",
-  "connect-src 'self' https://yhfndzlfkjzpxerkmdcd.supabase.co wss://yhfndzlfkjzpxerkmdcd.supabase.co",
+  "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://www.recaptcha.net",
+  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com https://*.google.com https://*.gstatic.com https://www.recaptcha.net",
+  "frame-src 'self' https://*.firebaseapp.com https://*.google.com https://www.recaptcha.net",
   "upgrade-insecure-requests",
 ].join("; ");
 

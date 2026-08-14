@@ -1,62 +1,20 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
+const root = path.resolve(import.meta.dirname, "..");
 
-test("renders development preview metadata", async () => {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-
-  const response = await worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
-
-  assert.equal(response.status, 200);
-  assert.match(
-    response.headers.get("content-type") ?? "",
-    /^text\/html\b/i,
-  );
-  assert.match(await response.text(), developmentPreviewMeta);
+test("GitHub Pages export contains the public booking site", async () => {
+  const html = await readFile(path.join(root, "out/index.html"), "utf8");
+  assert.match(html, /Seu estilo/);
+  assert.match(html, /Agendar/);
+  assert.match(html, /barbearialuiz\/_next/);
 });
 
-test("renders public and unauthenticated admin routes without private data", async () => {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("routes", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-  const env = {
-    ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
-  };
-  const ctx = { waitUntil() {}, passThroughOnException() {} };
-
-  const publicResponse = await worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
-    env,
-    ctx,
-  );
-  const adminResponse = await worker.fetch(
-    new Request("http://localhost/admin", { headers: { accept: "text/html" } }),
-    env,
-    ctx,
-  );
-
-  assert.equal(publicResponse.status, 200);
-  assert.match(await publicResponse.text(), /Seu estilo/);
-  assert.equal(adminResponse.status, 200);
-  const adminHtml = await adminResponse.text();
-  assert.match(adminHtml, /Validando acesso seguro/);
-  assert.match(adminHtml, /noindex, nofollow/);
-  assert.doesNotMatch(adminHtml, /customer_phone|customer_name|Próximos atendimentos/);
+test("admin export contains no customer data and is not indexed", async () => {
+  const html = await readFile(path.join(root, "out/admin/index.html"), "utf8");
+  assert.match(html, /Validando acesso seguro/);
+  assert.match(html, /noindex, nofollow/);
+  assert.doesNotMatch(html, /customerPhone|customerName|Próximos atendimentos/);
 });

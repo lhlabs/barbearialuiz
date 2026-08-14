@@ -299,9 +299,10 @@ a { color: inherit; text-decoration: none; }
 .availability-filters label { color: #79766e; display: flex; flex-direction: column; font-size: 8px; font-weight: 700; gap: 6px; letter-spacing: .1em; text-transform: uppercase; }
 .availability-filters select { min-height: 42px; }
 .admin-slot-grid { display: grid; gap: 7px; grid-template-columns: repeat(8,1fr); padding: 18px 20px 22px; }
-.admin-slot-grid div { border: 1px solid var(--line); display: flex; flex-direction: column; min-height: 58px; justify-content: center; padding: 8px; }
-.admin-slot-grid div strong { font-size: 11px; }
-.admin-slot-grid div small { font-size: 8px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-slot-grid button { border: 1px solid var(--line); cursor: pointer; display: flex; flex-direction: column; min-height: 58px; justify-content: center; padding: 8px; text-align: left; }
+.admin-slot-grid button:disabled { cursor: default; opacity: 1; }
+.admin-slot-grid button strong { font-size: 11px; }
+.admin-slot-grid button small { font-size: 8px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-slot-grid .free { background: #dce7da; color: #345538; }
 .admin-slot-grid .busy { background: #efcfb7; color: #6d391f; }
 .admin-slot-grid .blocked { background: #dedbd4; color: #716d66; }
