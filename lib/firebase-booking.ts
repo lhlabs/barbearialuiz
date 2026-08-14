@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  increment,
   query,
   runTransaction,
   serverTimestamp,
@@ -14,6 +15,7 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
+import { isPlausibleBrazilianMobile, normalizeBrazilianPhone } from "./booking-security";
 import { auth, db } from "./firebase";
 
 export type Service = {
@@ -110,10 +112,6 @@ function randomId(bytes = 16) {
   return Array.from(values, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-function normalizePhone(value: string) {
-  return value.replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "");
-}
-
 function mapService(id: string, data: Record<string, unknown>): Service {
   return {
     id,
@@ -191,10 +189,12 @@ type BookingInput = {
 
 export async function createBooking(input: BookingInput) {
   const customerName = input.customerName.trim().replace(/\s+/g, " ");
-  const customerPhone = normalizePhone(input.customerPhone);
+  const customerPhone = normalizeBrazilianPhone(input.customerPhone);
+  const source = input.source ?? "public";
   if (input.website) throw new Error("invalid-input");
-  if (customerName.length < 2 || customerName.length > 80 || !/^\d{10,11}$/.test(customerPhone)) throw new Error("invalid-input");
-  if (input.source !== "admin" && !input.consent) throw new Error("invalid-input");
+  if (customerName.length < 2 || customerName.length > 80) throw new Error("invalid-input");
+  if (!isPlausibleBrazilianMobile(customerPhone)) throw new Error("invalid-phone");
+  if (source !== "admin" && !input.consent) throw new Error("invalid-input");
 
   const appointmentId = randomId();
   const referenceCode = randomId(4).toUpperCase();
@@ -204,6 +204,8 @@ export async function createBooking(input: BookingInput) {
   const appointmentRef = doc(db, "appointments", appointmentId);
   const slotIds = cellMinutes.map((minute) => slotId(input.date, input.barberId, minute));
   const cellRefs = slotIds.map((id) => doc(db, "slots", id));
+  const bookingCounterId = source === "public" ? `${customerPhone}_${input.date}` : "admin";
+  const bookingCounterRef = source === "public" ? doc(db, "publicBookingCounters", bookingCounterId) : null;
 
   await runTransaction(db, async (transaction) => {
     const cellSnapshots = await Promise.all(cellRefs.map((reference) => transaction.get(reference)));
@@ -221,9 +223,10 @@ export async function createBooking(input: BookingInput) {
       durationMinutes: input.service.duration_minutes,
       status: "scheduled",
       referenceCode,
-      consent: input.source === "admin" ? false : true,
-      source: input.source ?? "public",
+      consent: source === "admin" ? false : true,
+      source,
       slotIds,
+      bookingCounterId,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -233,6 +236,15 @@ export async function createBooking(input: BookingInput) {
       blockId: null,
       updatedAt: serverTimestamp(),
     }));
+    if (bookingCounterRef) {
+      transaction.set(bookingCounterRef, {
+        phone: customerPhone,
+        date: input.date,
+        count: increment(1),
+        lastAppointmentId: appointmentId,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
   });
 
   return { reference_code: referenceCode, starts_at: localIso(input.date, input.startMinute) };
