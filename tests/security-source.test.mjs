@@ -30,6 +30,11 @@ test("repository contains no privileged credential material", async () => {
 test("Firestore rules are deny-by-default and protect personal data", async () => {
   const rules = await readFile(path.join(root, "firestore.rules"), "utf8");
   assert.match(rules, /function isAdmin\(\)/);
+  assert.match(rules, /function validBrazilianMobile\(value\)/);
+  assert.match(rules, /function validPublicBookingCounter/);
+  assert.match(rules, /match \/publicBookingCounters\/\{counterId\}/);
+  assert.match(rules, /request\.resource\.data\.count <= 2/);
+  assert.match(rules, /allow read, delete: if false/);
   assert.match(rules, /match \/appointments\/\{appointmentId\}/);
   assert.match(rules, /allow read: if isAdmin\(\)/);
   assert.match(rules, /validPublicSlotBooking/);
@@ -39,18 +44,27 @@ test("Firestore rules are deny-by-default and protect personal data", async () =
   assert.match(rules, /allow read, write: if false/);
 });
 
-test("booking is transactional and admin sessions are tab-scoped", async () => {
+test("booking is transactional, throttled and validates Brazilian mobile numbers", async () => {
   const booking = await readFile(path.join(root, "lib/firebase-booking.ts"), "utf8");
+  const guard = await readFile(path.join(root, "lib/booking-security.ts"), "utf8");
   const client = await readFile(path.join(root, "lib/firebase.ts"), "utf8");
   const layout = await readFile(path.join(root, "app/layout.tsx"), "utf8");
   assert.match(booking, /runTransaction/);
   assert.match(booking, /state !== "open"/);
+  assert.match(booking, /publicBookingCounters/);
+  assert.match(booking, /registerBookingAttempt/);
+  assert.match(booking, /registerBookingSuccess/);
   assert.match(booking, /const SLOT_INTERVAL = 15/);
   assert.match(booking, /where\("barberId", "==", barberId\)/);
   assert.match(booking, /id: "acabamento"/);
   assert.match(booking, /id: "caio"/);
   assert.match(booking, /id: "rafael"/);
+  assert.match(guard, /VALID_BRAZIL_DDDS/);
+  assert.match(guard, /subscriber\.startsWith\("9"\)/);
+  assert.match(guard, /MAX_ATTEMPTS_PER_WINDOW = 5/);
+  assert.match(guard, /MAX_SUCCESSES_PER_DAY = 3/);
   assert.match(client, /browserSessionPersistence/);
+  assert.match(client, /initializeAppCheck/);
   assert.match(layout, /Content-Security-Policy/);
   assert.match(layout, /object-src 'none'/);
   assert.match(layout, /googleapis\.com/);
