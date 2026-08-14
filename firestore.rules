@@ -15,6 +15,16 @@ service cloud.firestore {
       return value is string && value.matches('^20[2-9][0-9]-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])$');
     }
 
+    function validBrazilianMobile(value) {
+      return value is string
+        && value.matches('^(11|12|13|14|15|16|17|18|19|21|22|24|27|28|31|32|33|34|35|37|38|41|42|43|44|45|46|47|48|49|51|53|54|55|61|62|63|64|65|66|67|68|69|71|73|74|75|77|79|81|82|83|84|85|86|87|88|89|91|92|93|94|95|96|97|98|99)9[0-9]{8}$')
+        && !value.matches('^[0-9]{2}(900000000|911111111|922222222|933333333|944444444|955555555|966666666|977777777|988888888|999999999|912345678|987654321)$');
+    }
+
+    function abuseGuardRequired() {
+      return get(/databases/$(database)/documents/settings/general).data.abuseGuardRequired == true;
+    }
+
     function validService(data) {
       return data.keys().hasAll(['name', 'description', 'durationMinutes', 'priceCents', 'active', 'displayOrder', 'barberIds', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['name', 'description', 'durationMinutes', 'priceCents', 'active', 'displayOrder', 'barberIds', 'createdAt', 'updatedAt'])
@@ -70,13 +80,24 @@ service cloud.firestore {
         && cell.data.startMinute == minute;
     }
 
+    function validPublicBookingCounter(data, appointmentId) {
+      let counter = getAfter(/databases/$(database)/documents/publicBookingCounters/$(data.bookingCounterId));
+      return data.keys().hasAll(['bookingCounterId'])
+        && data.bookingCounterId == data.customerPhone + '_' + data.date
+        && counter.data.phone == data.customerPhone
+        && counter.data.date == data.date
+        && counter.data.count is int && counter.data.count >= 1 && counter.data.count <= 2
+        && counter.data.lastAppointmentId == appointmentId
+        && counter.data.updatedAt == request.time;
+    }
+
     function validAppointmentCreate(data, appointmentId) {
       let serviceDoc = get(/databases/$(database)/documents/services/$(data.serviceId));
       let barber = get(/databases/$(database)/documents/barbers/$(data.barberId));
       return data.keys().hasAll(['customerName', 'customerPhone', 'serviceId', 'barberId', 'date', 'dayStart', 'startMinute', 'endMinute', 'durationMinutes', 'status', 'referenceCode', 'consent', 'source', 'slotIds', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['customerName', 'customerPhone', 'serviceId', 'barberId', 'date', 'dayStart', 'startMinute', 'endMinute', 'durationMinutes', 'status', 'referenceCode', 'consent', 'source', 'slotIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['customerName', 'customerPhone', 'serviceId', 'barberId', 'date', 'dayStart', 'startMinute', 'endMinute', 'durationMinutes', 'status', 'referenceCode', 'consent', 'source', 'slotIds', 'bookingCounterId', 'createdAt', 'updatedAt'])
         && data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 80
-        && data.customerPhone is string && data.customerPhone.matches('^[0-9]{10,11}$')
+        && validBrazilianMobile(data.customerPhone)
         && data.serviceId is string && data.serviceId.size() >= 1 && data.serviceId.size() <= 64
         && data.barberId is string && data.barberId.size() >= 1 && data.barberId.size() <= 64
         && validDate(data.date)
@@ -100,7 +121,9 @@ service cloud.firestore {
         && data.createdAt == request.time && data.updatedAt == request.time
         && serviceDoc.data.active == true && serviceDoc.data.durationMinutes == data.durationMinutes
         && barber.data.active == true && data.barberId in serviceDoc.data.barberIds
-        && ((data.source == 'public' && data.consent == true) || (data.source == 'admin' && isAdmin()))
+        && ((data.source == 'public' && data.consent == true
+              && (!abuseGuardRequired() || validPublicBookingCounter(data, appointmentId)))
+          || (data.source == 'admin' && isAdmin()))
         && bookedCell(data.slotIds[0], data.date, data.dayStart, data.barberId, data.startMinute, appointmentId)
         && (data.durationMinutes <= 15 || bookedCell(data.slotIds[1], data.date, data.dayStart, data.barberId, data.startMinute + 15, appointmentId))
         && (data.durationMinutes <= 30 || bookedCell(data.slotIds[2], data.date, data.dayStart, data.barberId, data.startMinute + 30, appointmentId))
@@ -124,6 +147,22 @@ service cloud.firestore {
         && (data.startMinute - appointment.data.startMinute) % 15 == 0;
     }
 
+    function validCounterWrite(data, counterId) {
+      let appointment = getAfter(/databases/$(database)/documents/appointments/$(data.lastAppointmentId));
+      return data.keys().hasAll(['phone', 'date', 'count', 'lastAppointmentId', 'updatedAt'])
+        && data.keys().hasOnly(['phone', 'date', 'count', 'lastAppointmentId', 'updatedAt'])
+        && counterId == data.phone + '_' + data.date
+        && validBrazilianMobile(data.phone)
+        && validDate(data.date)
+        && data.count is int && data.count >= 1 && data.count <= 2
+        && data.lastAppointmentId is string && data.lastAppointmentId.size() >= 20 && data.lastAppointmentId.size() <= 80
+        && data.updatedAt == request.time
+        && appointment.data.source == 'public'
+        && appointment.data.customerPhone == data.phone
+        && appointment.data.date == data.date
+        && appointment.data.bookingCounterId == counterId;
+    }
+
     match /services/{serviceId} {
       allow read: if true;
       allow create, update: if isAdmin() && validService(request.resource.data);
@@ -141,13 +180,14 @@ service cloud.firestore {
       allow list: if false;
       allow create, update: if isAdmin()
         && request.resource.data.keys().hasAll(['timezone', 'slotIntervalMinutes', 'bookingHorizonDays', 'weeklyAvailability', 'updatedAt'])
-        && request.resource.data.keys().hasOnly(['timezone', 'slotIntervalMinutes', 'bookingHorizonDays', 'weeklyAvailability', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['timezone', 'slotIntervalMinutes', 'bookingHorizonDays', 'weeklyAvailability', 'abuseGuardRequired', 'updatedAt'])
         && request.resource.data.timezone == 'America/Sao_Paulo'
         && request.resource.data.slotIntervalMinutes == 15
         && request.resource.data.bookingHorizonDays is int
         && request.resource.data.bookingHorizonDays >= 1
         && request.resource.data.bookingHorizonDays <= 90
         && request.resource.data.weeklyAvailability is map
+        && (!('abuseGuardRequired' in request.resource.data) || request.resource.data.abuseGuardRequired is bool)
         && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }
@@ -166,6 +206,17 @@ service cloud.firestore {
         && request.resource.data.status in ['scheduled', 'completed', 'cancelled', 'no_show']
         && request.resource.data.updatedAt == request.time;
       allow delete: if false;
+    }
+
+    match /publicBookingCounters/{counterId} {
+      allow read, delete: if false;
+      allow create: if validCounterWrite(request.resource.data, counterId)
+        && request.resource.data.count == 1;
+      allow update: if validCounterWrite(request.resource.data, counterId)
+        && request.resource.data.phone == resource.data.phone
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.count == resource.data.count + 1
+        && request.resource.data.count <= 2;
     }
 
     match /blockedSlots/{blockId} {
