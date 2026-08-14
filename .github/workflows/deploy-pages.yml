@@ -46,6 +46,8 @@ jobs:
       - run: npm run lint
       - name: Build static site
         run: npx next build
+      - name: Run security and rendered-output tests
+        run: node --test tests/*.test.mjs
       - uses: actions/configure-pages@v5
         with:
           enablement: true
