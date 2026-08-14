@@ -72,6 +72,20 @@ function phoneLabel(value: string) {
     : value;
 }
 
+function authenticationErrorMessage(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code: unknown }).code)
+    : "";
+
+  if (["auth/invalid-credential", "auth/invalid-email", "auth/user-not-found", "auth/wrong-password"].includes(code)) {
+    return "O Firebase recusou o e-mail ou a senha. Use exatamente a credencial cadastrada em Authentication → Usuários.";
+  }
+  if (code === "auth/user-disabled") return "Este usuário está desativado no Firebase Authentication.";
+  if (code === "auth/too-many-requests") return "Muitas tentativas. Aguarde alguns minutos antes de tentar novamente.";
+  if (code === "auth/network-request-failed") return "Falha de conexão com o Firebase. Verifique a internet e tente novamente.";
+  return code ? `Falha no Firebase Authentication (${code}).` : "Não foi possível autenticar no Firebase.";
+}
+
 export default function AdminApp() {
   const [session, setSession] = useState<User | null>(null);
   const [authorized, setAuthorized] = useState<boolean | null>(null);
@@ -112,12 +126,18 @@ export default function AdminApp() {
   useEffect(() => {
     if (!session) return;
     const verify = async () => {
-      if (!(await isCurrentUserAdmin().catch(() => false))) {
+      try {
+        if (await isCurrentUserAdmin()) {
+          setAuthorized(true);
+          return;
+        }
         await signOut(auth);
         setAuthorized(false);
-        setLoginError("Credenciais inválidas ou usuário sem permissão administrativa.");
-      } else {
-        setAuthorized(true);
+        setLoginError("Login aceito, mas o UID não está autorizado na coleção admins.");
+      } catch {
+        await signOut(auth);
+        setAuthorized(false);
+        setLoginError("Login aceito, mas o Firestore não permitiu validar o documento do administrador.");
       }
     };
     void verify();
@@ -166,7 +186,7 @@ export default function AdminApp() {
     setLoginError("");
     const error = await signInWithEmailAndPassword(auth, email, password).then(() => null).catch((caught) => caught);
     setPassword("");
-    if (error) setLoginError("Credenciais inválidas ou usuário sem permissão administrativa.");
+    if (error) setLoginError(authenticationErrorMessage(error));
     setLoginLoading(false);
   };
 
