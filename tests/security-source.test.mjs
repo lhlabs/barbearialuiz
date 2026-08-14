@@ -45,6 +45,11 @@ test("booking is transactional and admin sessions are tab-scoped", async () => {
   const layout = await readFile(path.join(root, "app/layout.tsx"), "utf8");
   assert.match(booking, /runTransaction/);
   assert.match(booking, /state !== "open"/);
+  assert.match(booking, /const SLOT_INTERVAL = 15/);
+  assert.match(booking, /where\("barberId", "==", barberId\)/);
+  assert.match(booking, /id: "acabamento"/);
+  assert.match(booking, /id: "caio"/);
+  assert.match(booking, /id: "rafael"/);
   assert.match(client, /browserSessionPersistence/);
   assert.match(layout, /Content-Security-Policy/);
   assert.match(layout, /object-src 'none'/);

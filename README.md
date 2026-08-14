@@ -5,13 +5,13 @@ Site público, agendamento sem cadastro e painel administrativo para uma barbear
 ## Arquitetura
 
 - `services` e `barbers`: catálogo público sem dados pessoais;
-- `slots`: células de 30 minutos públicas, contendo somente estado (`open`, `booked` ou `blocked`);
+- `slots`: células de 15 minutos públicas, contendo somente estado (`open`, `booked` ou `blocked`);
 - `appointments`: dados pessoais, legíveis somente por administradores autorizados;
 - `blockedSlots`: detalhes privados dos bloqueios;
 - `admins/{uid}`: allowlist administrativa;
 - `settings/general`: fuso, horizonte e expediente semanal.
 
-Uma reserva é uma transação que cria o agendamento e altera todas as células necessárias de `open` para `booked`. As regras exigem o vínculo entre os documentos. Assim, duas reservas concorrentes — inclusive de serviços com mais de 30 minutos — não podem ocupar o mesmo período.
+Uma reserva é uma transação que cria o agendamento e altera todas as células necessárias de `open` para `booked`. As regras exigem o vínculo entre os documentos. Assim, duas reservas concorrentes — inclusive de serviços com mais de 15 minutos — não podem ocupar o mesmo período.
 
 ## Configuração do Firebase
 
