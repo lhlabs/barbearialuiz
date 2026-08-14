@@ -22,18 +22,26 @@ jobs:
       GITHUB_PAGES: "true"
       PAGES_BASE_PATH: /${{ github.event.repository.name }}
       NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
-      NEXT_PUBLIC_SUPABASE_URL: https://yhfndzlfkjzpxerkmdcd.supabase.co
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_2Ies9GsyGmuh2kDc04lTFA_7nW9BC8H
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY || 'AIzaSyBFSgsGgOfdymrGT51z7yULxggouF6w6J4' }}
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'default-d779a.firebaseapp.com' }}
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'default-d779a' }}
+      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ vars.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'default-d779a.firebasestorage.app' }}
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '787238899836' }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID || '1:787238899836:web:50436d295ca2d21e44b9f9' }}
+      NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Require isolated Supabase public configuration
+      - name: Require isolated Firebase public configuration
         run: |
-          test -n "$NEXT_PUBLIC_SUPABASE_URL"
-          test -n "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
+          test -n "$NEXT_PUBLIC_FIREBASE_API_KEY"
+          test -n "$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"
+          test -n "$NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+          test -n "$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"
+          test -n "$NEXT_PUBLIC_FIREBASE_APP_ID"
       - run: npm ci
       - run: npm run lint
       - name: Build static site

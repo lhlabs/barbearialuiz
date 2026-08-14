@@ -24,14 +24,3 @@ export const businessConfig = {
       "Usamos nome e WhatsApp apenas para organizar e confirmar seu atendimento. Dados pessoais são removidos após o período de retenção.",
   },
 } as const;
-
-// A URL and a publishable key are intentionally public client configuration.
-// Never place secret/service_role keys here or in any browser bundle.
-export const publicSupabaseConfig = {
-  url:
-    process.env.NEXT_PUBLIC_SUPABASE_URL ??
-    "https://yhfndzlfkjzpxerkmdcd.supabase.co",
-  publishableKey:
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-    "sb_publishable_2Ies9GsyGmuh2kDc04lTFA_7nW9BC8H",
-} as const;

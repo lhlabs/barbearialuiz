@@ -20,6 +20,10 @@
 # misc
 .DS_Store
 *.pem
+*service-account*.json
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
 
 # debug
 npm-debug.log*

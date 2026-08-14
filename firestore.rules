@@ -1,0 +1,184 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
+    }
+
+    function validDate(value) {
+      return value is string && value.matches('^20[2-9][0-9]-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])$');
+    }
+
+    function validService(data) {
+      return data.keys().hasAll(['name', 'description', 'durationMinutes', 'priceCents', 'active', 'displayOrder', 'barberIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'description', 'durationMinutes', 'priceCents', 'active', 'displayOrder', 'barberIds', 'createdAt', 'updatedAt'])
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.description is string && data.description.size() <= 240
+        && data.durationMinutes is int && data.durationMinutes >= 30 && data.durationMinutes <= 90
+        && data.priceCents is int && data.priceCents >= 0 && data.priceCents <= 100000
+        && data.active is bool && data.displayOrder is int
+        && data.barberIds is list && data.barberIds.size() >= 1 && data.barberIds.size() <= 10
+        && data.createdAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function validBarber(data) {
+      return data.keys().hasAll(['name', 'bio', 'active', 'displayOrder', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'bio', 'active', 'displayOrder', 'createdAt', 'updatedAt'])
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.bio is string && data.bio.size() <= 240
+        && data.active is bool && data.displayOrder is int
+        && data.createdAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function validSlot(data) {
+      return data.keys().hasAll(['date', 'dayStart', 'barberId', 'startMinute', 'state', 'appointmentId', 'blockId', 'updatedAt'])
+        && data.keys().hasOnly(['date', 'dayStart', 'barberId', 'startMinute', 'state', 'appointmentId', 'blockId', 'updatedAt'])
+        && validDate(data.date)
+        && data.dayStart is timestamp
+        && data.barberId is string && data.barberId.size() >= 1 && data.barberId.size() <= 64
+        && data.startMinute is int && data.startMinute >= 0 && data.startMinute < 1440 && data.startMinute % 30 == 0
+        && data.state in ['open', 'booked', 'blocked']
+        && (data.appointmentId == null || (data.appointmentId is string && data.appointmentId.size() >= 20 && data.appointmentId.size() <= 80))
+        && (data.blockId == null || (data.blockId is string && data.blockId.size() >= 20 && data.blockId.size() <= 80))
+        && data.updatedAt == request.time;
+    }
+
+    function validBlock(data) {
+      return data.keys().hasAll(['barberId', 'date', 'startMinute', 'endMinute', 'reason', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['barberId', 'date', 'startMinute', 'endMinute', 'reason', 'createdAt', 'updatedAt'])
+        && data.barberId is string && data.barberId.size() >= 1 && data.barberId.size() <= 64
+        && validDate(data.date)
+        && data.startMinute is int && data.startMinute >= 0 && data.startMinute < 1440 && data.startMinute % 30 == 0
+        && data.endMinute is int && data.endMinute > data.startMinute && data.endMinute <= 1440 && data.endMinute % 30 == 0
+        && data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 120
+        && data.createdAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function bookedCell(slotId, date, dayStart, barberId, minute, appointmentId) {
+      let cell = getAfter(/databases/$(database)/documents/slots/$(slotId));
+      return cell.data.state == 'booked'
+        && cell.data.appointmentId == appointmentId
+        && cell.data.date == date
+        && cell.data.dayStart == dayStart
+        && cell.data.barberId == barberId
+        && cell.data.startMinute == minute;
+    }
+
+    function validAppointmentCreate(data, appointmentId) {
+      let serviceDoc = get(/databases/$(database)/documents/services/$(data.serviceId));
+      let barber = get(/databases/$(database)/documents/barbers/$(data.barberId));
+      return data.keys().hasAll(['customerName', 'customerPhone', 'serviceId', 'barberId', 'date', 'dayStart', 'startMinute', 'endMinute', 'durationMinutes', 'status', 'referenceCode', 'consent', 'source', 'slotIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['customerName', 'customerPhone', 'serviceId', 'barberId', 'date', 'dayStart', 'startMinute', 'endMinute', 'durationMinutes', 'status', 'referenceCode', 'consent', 'source', 'slotIds', 'createdAt', 'updatedAt'])
+        && data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 80
+        && data.customerPhone is string && data.customerPhone.matches('^[0-9]{10,11}$')
+        && data.serviceId is string && data.serviceId.size() >= 1 && data.serviceId.size() <= 64
+        && data.barberId is string && data.barberId.size() >= 1 && data.barberId.size() <= 64
+        && validDate(data.date)
+        && data.dayStart is timestamp
+        && data.dayStart >= request.time - duration.value(1, 'd')
+        && data.dayStart <= request.time + duration.value(91, 'd')
+        && data.startMinute is int && data.startMinute >= 360 && data.startMinute <= 1290 && data.startMinute % 30 == 0
+        && data.durationMinutes is int && data.durationMinutes >= 30 && data.durationMinutes <= 90
+        && data.endMinute == data.startMinute + data.durationMinutes && data.endMinute <= 1380
+        && data.status == 'scheduled'
+        && data.referenceCode is string && data.referenceCode.matches('^[A-F0-9]{8}$')
+        && data.consent is bool && data.source in ['public', 'admin']
+        && data.slotIds is list
+        && ((data.durationMinutes <= 30 && data.slotIds.size() == 1)
+          || (data.durationMinutes > 30 && data.durationMinutes <= 60 && data.slotIds.size() == 2)
+          || (data.durationMinutes > 60 && data.slotIds.size() == 3))
+        && data.createdAt == request.time && data.updatedAt == request.time
+        && serviceDoc.data.active == true && serviceDoc.data.durationMinutes == data.durationMinutes
+        && barber.data.active == true && data.barberId in serviceDoc.data.barberIds
+        && ((data.source == 'public' && data.consent == true) || (data.source == 'admin' && isAdmin()))
+        && bookedCell(data.slotIds[0], data.date, data.dayStart, data.barberId, data.startMinute, appointmentId)
+        && (data.durationMinutes <= 30 || bookedCell(data.slotIds[1], data.date, data.dayStart, data.barberId, data.startMinute + 30, appointmentId))
+        && (data.durationMinutes <= 60 || bookedCell(data.slotIds[2], data.date, data.dayStart, data.barberId, data.startMinute + 60, appointmentId));
+    }
+
+    function validPublicSlotBooking(data, slotId) {
+      let appointment = getAfter(/databases/$(database)/documents/appointments/$(data.appointmentId));
+      return validSlot(data)
+        && resource.data.state == 'open'
+        && data.state == 'booked' && data.blockId == null
+        && data.date == resource.data.date && data.dayStart == resource.data.dayStart && data.barberId == resource.data.barberId && data.startMinute == resource.data.startMinute
+        && data.updatedAt == request.time
+        && appointment.data.status == 'scheduled'
+        && slotId in appointment.data.slotIds
+        && appointment.data.date == data.date && appointment.data.dayStart == data.dayStart && appointment.data.barberId == data.barberId
+        && data.startMinute >= appointment.data.startMinute
+        && data.startMinute < appointment.data.endMinute
+        && (data.startMinute - appointment.data.startMinute) % 30 == 0;
+    }
+
+    match /services/{serviceId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && validService(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /barbers/{barberId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && validBarber(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /settings/general {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasAll(['timezone', 'slotIntervalMinutes', 'bookingHorizonDays', 'weeklyAvailability', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['timezone', 'slotIntervalMinutes', 'bookingHorizonDays', 'weeklyAvailability', 'updatedAt'])
+        && request.resource.data.timezone == 'America/Sao_Paulo'
+        && request.resource.data.slotIntervalMinutes == 30
+        && request.resource.data.bookingHorizonDays is int
+        && request.resource.data.bookingHorizonDays >= 1
+        && request.resource.data.bookingHorizonDays <= 90
+        && request.resource.data.weeklyAvailability is map
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /slots/{slotId} {
+      allow read: if true;
+      allow update: if validPublicSlotBooking(request.resource.data, slotId) || (isAdmin() && validSlot(request.resource.data));
+      allow create, delete: if isAdmin() && (request.method == 'delete' || validSlot(request.resource.data));
+    }
+
+    match /appointments/{appointmentId} {
+      allow create: if validAppointmentCreate(request.resource.data, appointmentId);
+      allow read: if isAdmin();
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['scheduled', 'completed', 'cancelled', 'no_show']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /blockedSlots/{blockId} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin() && validBlock(request.resource.data);
+    }
+
+    match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list: if false;
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['active', 'createdAt'])
+        && request.resource.data.active is bool
+        && request.resource.data.createdAt is timestamp;
+      allow delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

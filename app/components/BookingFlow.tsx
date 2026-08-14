@@ -14,24 +14,9 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { businessConfig } from "../../lib/config";
-import { supabase } from "../../lib/supabase";
-
-type Service = {
-  id: string;
-  name: string;
-  description: string;
-  duration_minutes: number;
-  price_cents: number;
-};
-
-type Barber = {
-  id: string;
-  name: string;
-  bio: string;
-};
+import { createBooking, loadAvailableSlots, loadCatalog, type Barber, type Service, type Slot } from "../../lib/firebase-booking";
 
 type BarberService = { barber_id: string; service_id: string };
-type Slot = { slot_start: string; slot_label: string; available: boolean };
 
 const steps = ["Serviço", "Profissional", "Data", "Horário", "Dados"];
 
@@ -85,21 +70,6 @@ function cleanPhone(value: string) {
   return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, -4)}-${digits.slice(-4)}`;
 }
 
-function createIdempotencyUuid() {
-  const bytes = new Uint8Array(16);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 export default function BookingFlow({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState(0);
   const [services, setServices] = useState<Service[]>([]);
@@ -118,28 +88,23 @@ export default function BookingFlow({ onClose }: { onClose: () => void }) {
   const [phone, setPhone] = useState("");
   const [website, setWebsite] = useState("");
   const [consent, setConsent] = useState(false);
-  const [idempotencyKey] = useState(createIdempotencyUuid);
   const [confirmation, setConfirmation] = useState<{ reference: string; startsAt: string } | null>(null);
   const dates = useMemo(() => dateOptions(), []);
 
   useEffect(() => {
-    const loadCatalog = async () => {
+    const loadCatalogData = async () => {
       setLoading(true);
-      const [servicesResult, barbersResult, linksResult] = await Promise.all([
-        supabase.from("services").select("id,name,description,duration_minutes,price_cents").eq("active", true).order("display_order"),
-        supabase.from("barbers").select("id,name,bio").eq("active", true).order("display_order"),
-        supabase.from("barber_services").select("barber_id,service_id"),
-      ]);
-      if (servicesResult.error || barbersResult.error || linksResult.error) {
+      try {
+        const catalog = await loadCatalog();
+        setServices(catalog.services);
+        setBarbers(catalog.barbers);
+        setLinks(catalog.services.flatMap((service) => service.barber_ids.map((barberId) => ({ barber_id: barberId, service_id: service.id }))));
+      } catch {
         setError("Não conseguimos carregar a agenda agora. Tente novamente em instantes.");
-      } else {
-        setServices((servicesResult.data ?? []) as Service[]);
-        setBarbers((barbersResult.data ?? []) as Barber[]);
-        setLinks((linksResult.data ?? []) as BarberService[]);
       }
       setLoading(false);
     };
-    void loadCatalog();
+    void loadCatalogData();
   }, []);
 
   const availableBarbers = selectedService
@@ -154,16 +119,11 @@ export default function BookingFlow({ onClose }: { onClose: () => void }) {
       setSlotsLoading(true);
       setError("");
       setSelectedSlot(null);
-      const { data, error: slotsError } = await supabase.rpc("get_available_slots", {
-        p_service_id: selectedService.id,
-        p_barber_id: selectedBarber.id,
-        p_date: selectedDate,
-      });
-      if (slotsError) {
+      try {
+        setSlots(await loadAvailableSlots(selectedDate, selectedService, selectedBarber.id));
+      } catch {
         setSlots([]);
         setError("Não conseguimos consultar os horários. Verifique sua conexão e tente novamente.");
-      } else {
-        setSlots((data ?? []) as Slot[]);
       }
       setSlotsLoading(false);
     };
@@ -189,32 +149,26 @@ export default function BookingFlow({ onClose }: { onClose: () => void }) {
 
     setSubmitting(true);
     setError("");
-    const { data, error: bookingError } = await supabase.rpc("create_appointment", {
-      p_service_id: selectedService.id,
-      p_barber_id: selectedBarber.id,
-      p_starts_at: selectedSlot.slot_start,
-      p_customer_name: name.trim(),
-      p_customer_phone: phone,
-      p_idempotency_key: idempotencyKey,
-      p_website: website,
-      p_consent: consent,
-    });
-
-    if (bookingError || !data?.[0]) {
-      const friendly = bookingError?.message?.includes("acabou de ficar indisponível")
+    try {
+      const data = await createBooking({
+        service: selectedService,
+        barberId: selectedBarber.id,
+        date: selectedDate,
+        startMinute: selectedSlot.start_minute,
+        customerName: name,
+        customerPhone: phone,
+        consent,
+        website,
+      });
+      setConfirmation({ reference: data.reference_code, startsAt: data.starts_at });
+    } catch (bookingError) {
+      const friendly = bookingError instanceof Error && bookingError.message === "slot-unavailable"
         ? "Este horário acabou de ficar indisponível. Volte e escolha outro."
-        : bookingError?.message?.includes("Muitas tentativas")
-          ? "Muitas tentativas. Aguarde alguns minutos e tente novamente."
-          : "Não conseguimos concluir o agendamento. Revise os dados ou escolha outro horário.";
+        : "Não conseguimos concluir o agendamento. Revise os dados ou escolha outro horário.";
       setError(friendly);
       setSubmitting(false);
       return;
     }
-
-    setConfirmation({
-      reference: data[0].reference_code,
-      startsAt: data[0].starts_at,
-    });
     setSubmitting(false);
   };
 

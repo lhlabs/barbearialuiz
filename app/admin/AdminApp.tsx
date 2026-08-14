@@ -21,29 +21,27 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import type { Session } from "@supabase/supabase-js";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { businessConfig } from "../../lib/config";
-import { supabase } from "../../lib/supabase";
-
-type Appointment = {
-  id: string;
-  customer_name: string;
-  customer_phone: string;
-  starts_at: string;
-  ends_at: string;
-  status: "scheduled" | "completed" | "cancelled" | "no_show";
-  reference_code: string;
-  barbers: { id: string; name: string } | null;
-  services: { id: string; name: string; duration_minutes: number } | null;
-};
-
-type Barber = { id: string; name: string };
-type Service = { id: string; name: string; duration_minutes: number };
-type BlockedTime = { id: string; barber_id: string; starts_at: string; ends_at: string; reason: string };
-type Slot = { slot_start: string; slot_label: string; available: boolean };
+import { auth } from "../../lib/firebase";
+import {
+  createBlock as createFirebaseBlock,
+  createBooking,
+  deleteBlock as deleteFirebaseBlock,
+  initializeBusinessData,
+  isCurrentUserAdmin,
+  loadAdminDay,
+  loadAvailableSlots,
+  updateAppointmentStatus,
+  type Appointment,
+  type Barber,
+  type BlockedTime,
+  type Service,
+  type Slot,
+} from "../../lib/firebase-booking";
 
 function dateKey(date: Date) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -58,13 +56,6 @@ function addDays(date: string, amount: number) {
   const value = new Date(`${date}T12:00:00`);
   value.setDate(value.getDate() + amount);
   return dateKey(value);
-}
-
-function dayRange(date: string) {
-  return {
-    start: `${date}T00:00:00-03:00`,
-    end: `${addDays(date, 1)}T00:00:00-03:00`,
-  };
 }
 
 function timeLabel(value: string) {
@@ -82,7 +73,7 @@ function phoneLabel(value: string) {
 }
 
 export default function AdminApp() {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<User | null>(null);
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -106,25 +97,23 @@ export default function AdminApp() {
   const [scheduleService, setScheduleService] = useState("");
   const [slots, setSlots] = useState<Slot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [initializing, setInitializing] = useState(false);
+  const [adminSlot, setAdminSlot] = useState<Slot | null>(null);
+  const [adminCustomerName, setAdminCustomerName] = useState("");
+  const [adminCustomerPhone, setAdminCustomerPhone] = useState("");
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      if (!data.session) setAuthorized(false);
+    return onAuthStateChanged(auth, (user) => {
+      setSession(user);
+      if (!user) setAuthorized(false);
     });
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      if (!nextSession) setAuthorized(false);
-    });
-    return () => data.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
     if (!session) return;
     const verify = async () => {
-      const { data, error } = await supabase.rpc("is_admin");
-      if (error || data !== true) {
-        await supabase.auth.signOut();
+      if (!(await isCurrentUserAdmin().catch(() => false))) {
+        await signOut(auth);
         setAuthorized(false);
         setLoginError("Credenciais inválidas ou usuário sem permissão administrativa.");
       } else {
@@ -138,30 +127,19 @@ export default function AdminApp() {
     if (!authorized) return;
     setLoading(true);
     setActionError("");
-    const range = dayRange(selectedDate);
-    const [appointmentsResult, barbersResult, servicesResult, blocksResult] = await Promise.all([
-      supabase
-        .from("appointments")
-        .select("id,customer_name,customer_phone,starts_at,ends_at,status,reference_code,barbers(id,name),services(id,name,duration_minutes)")
-        .gte("starts_at", range.start)
-        .lt("starts_at", range.end)
-        .order("starts_at"),
-      supabase.from("barbers").select("id,name").order("display_order"),
-      supabase.from("services").select("id,name,duration_minutes").order("display_order"),
-      supabase.from("blocked_times").select("id,barber_id,starts_at,ends_at,reason").gte("starts_at", range.start).lt("starts_at", range.end).order("starts_at"),
-    ]);
-    if (appointmentsResult.error || barbersResult.error || servicesResult.error || blocksResult.error) {
-      setActionError("Não foi possível carregar a agenda. Tente novamente.");
-    } else {
-      setAppointments((appointmentsResult.data ?? []) as unknown as Appointment[]);
-      setBarbers((barbersResult.data ?? []) as Barber[]);
-      setServices((servicesResult.data ?? []) as Service[]);
-      setBlocks((blocksResult.data ?? []) as BlockedTime[]);
-      const firstBarber = barbersResult.data?.[0]?.id ?? "";
-      const firstService = servicesResult.data?.[0]?.id ?? "";
+    try {
+      const data = await loadAdminDay(selectedDate);
+      setAppointments(data.appointments);
+      setBarbers(data.barbers);
+      setServices(data.services);
+      setBlocks(data.blocks);
+      const firstBarber = data.barbers[0]?.id ?? "";
+      const firstService = data.services[0]?.id ?? "";
       setBlockBarber((value) => value || firstBarber);
       setScheduleBarber((value) => value || firstBarber);
       setScheduleService((value) => value || firstService);
+    } catch {
+      setActionError("Não foi possível carregar a agenda. Tente novamente.");
     }
     setLoading(false);
   }, [authorized, selectedDate]);
@@ -175,29 +153,25 @@ export default function AdminApp() {
     if (!authorized || !scheduleBarber || !scheduleService) return;
     const loadSlots = async () => {
       setSlotsLoading(true);
-      const { data } = await supabase.rpc("get_available_slots", {
-        p_barber_id: scheduleBarber,
-        p_service_id: scheduleService,
-        p_date: selectedDate,
-      });
-      setSlots((data ?? []) as Slot[]);
+      const service = services.find((item) => item.id === scheduleService);
+      setSlots(service ? await loadAvailableSlots(selectedDate, service, scheduleBarber, true).catch(() => []) : []);
       setSlotsLoading(false);
     };
     void loadSlots();
-  }, [authorized, scheduleBarber, scheduleService, selectedDate, appointments, blocks]);
+  }, [authorized, scheduleBarber, scheduleService, selectedDate, appointments, blocks, services]);
 
   const login = async (event: FormEvent) => {
     event.preventDefault();
     setLoginLoading(true);
     setLoginError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const error = await signInWithEmailAndPassword(auth, email, password).then(() => null).catch((caught) => caught);
     setPassword("");
     if (error) setLoginError("Credenciais inválidas ou usuário sem permissão administrativa.");
     setLoginLoading(false);
   };
 
   const logout = async () => {
-    await supabase.auth.signOut({ scope: "local" });
+    await signOut(auth);
     setSession(null);
     setAuthorized(false);
   };
@@ -205,10 +179,8 @@ export default function AdminApp() {
   const updateStatus = async (id: string, status: "completed" | "cancelled" | "no_show") => {
     if (status === "cancelled" && !window.confirm("Cancelar este agendamento?")) return;
     setActionError("");
-    const { error } = await supabase.rpc("admin_set_appointment_status", {
-      p_appointment_id: id,
-      p_status: status,
-    });
+    const appointment = appointments.find((item) => item.id === id);
+    const error = appointment ? await updateAppointmentStatus(appointment, status).then(() => null).catch((caught) => caught) : new Error("not-found");
     if (error) setActionError("Não foi possível atualizar o agendamento.");
     else {
       setActionSuccess(status === "cancelled" ? "Agendamento cancelado." : "Status atualizado.");
@@ -219,13 +191,9 @@ export default function AdminApp() {
   const createBlock = async (event: FormEvent) => {
     event.preventDefault();
     setActionError("");
-    const { error } = await supabase.rpc("admin_create_block", {
-      p_barber_id: blockBarber,
-      p_starts_at: `${selectedDate}T${blockStart}:00-03:00`,
-      p_ends_at: `${selectedDate}T${blockEnd}:00-03:00`,
-      p_reason: blockReason,
-    });
-    if (error) setActionError(error.message.includes("agendamento") ? "Há um agendamento nesse período. Cancele-o antes de bloquear." : "Não foi possível criar o bloqueio. Revise o período.");
+    const toMinute = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
+    const error = await createFirebaseBlock({ barberId: blockBarber, date: selectedDate, startMinute: toMinute(blockStart), endMinute: toMinute(blockEnd), reason: blockReason }).then(() => null).catch((caught) => caught);
+    if (error) setActionError(error instanceof Error && error.message === "slot-unavailable" ? "Há um agendamento ou bloqueio nesse período." : "Não foi possível criar o bloqueio. Revise o período.");
     else {
       setActionSuccess("Horário bloqueado.");
       setShowBlockForm(false);
@@ -234,11 +202,43 @@ export default function AdminApp() {
   };
 
   const deleteBlock = async (id: string) => {
-    const { error } = await supabase.rpc("admin_delete_block", { p_block_id: id });
+    const block = blocks.find((item) => item.id === id);
+    const error = block ? await deleteFirebaseBlock(block).then(() => null).catch((caught) => caught) : new Error("not-found");
     if (error) setActionError("Não foi possível remover o bloqueio.");
     else {
       setActionSuccess("Bloqueio removido.");
       await loadAdminData();
+    }
+  };
+
+  const initialize = async () => {
+    setInitializing(true);
+    setActionError("");
+    try {
+      await initializeBusinessData();
+      setActionSuccess("Catálogo e próximos 90 dias criados.");
+      await loadAdminData();
+    } catch {
+      setActionError("Não foi possível inicializar os dados.");
+    } finally {
+      setInitializing(false);
+    }
+  };
+
+  const createAdminBooking = async (event: FormEvent) => {
+    event.preventDefault();
+    const service = services.find((item) => item.id === scheduleService);
+    if (!service || !adminSlot) return;
+    setActionError("");
+    try {
+      await createBooking({ service, barberId: scheduleBarber, date: selectedDate, startMinute: adminSlot.start_minute, customerName: adminCustomerName, customerPhone: adminCustomerPhone, consent: false, source: "admin" });
+      setAdminSlot(null);
+      setAdminCustomerName("");
+      setAdminCustomerPhone("");
+      setActionSuccess("Agendamento criado.");
+      await loadAdminData();
+    } catch {
+      setActionError("Não foi possível criar o agendamento. Verifique os dados e o horário.");
     }
   };
 
@@ -277,7 +277,7 @@ export default function AdminApp() {
           <span className="login-icon"><LockKeyhole /></span>
           <p className="eyebrow dark"><span /> Acesso restrito</p>
           <h1>Bem-vindo<br />de volta.</h1>
-          <p>Entre com sua credencial individual cadastrada no Supabase Auth.</p>
+          <p>Entre com sua credencial individual cadastrada no Firebase Authentication.</p>
           <form onSubmit={login}>
             <label>E-mail<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required placeholder="seu@email.com" /></label>
             <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required placeholder="••••••••••••" /></label>
@@ -286,7 +286,7 @@ export default function AdminApp() {
               {loginLoading ? <><LoaderCircle className="spin" /> Verificando…</> : <>Entrar com segurança <ArrowRight /></>}
             </button>
           </form>
-          <small className="security-note"><ShieldCheck /> Sua senha é tratada exclusivamente pelo Supabase Auth.</small>
+          <small className="security-note"><ShieldCheck /> Sua senha é tratada exclusivamente pelo Firebase Authentication.</small>
         </section>
       </main>
     );
@@ -330,7 +330,7 @@ export default function AdminApp() {
           <p className="metric-note">* Conforme serviço e profissional selecionados abaixo.</p>
 
           <section className="agenda-card">
-            <div className="admin-section-title"><div><p>AGENDA DO DIA</p><h2>Próximos atendimentos</h2></div><button type="button" onClick={() => setShowBlockForm(true)}><Ban /> Bloquear horário</button></div>
+            <div className="admin-section-title"><div><p>AGENDA DO DIA</p><h2>Próximos atendimentos</h2></div>{services.length === 0 ? <button type="button" onClick={initialize} disabled={initializing}>{initializing ? <LoaderCircle className="spin" /> : <Scissors />} Inicializar agenda</button> : <button type="button" onClick={() => setShowBlockForm(true)}><Ban /> Bloquear horário</button>}</div>
             {loading ? (
               <div className="admin-empty"><LoaderCircle className="spin" /> Carregando…</div>
             ) : scheduled.length === 0 ? (
@@ -339,9 +339,9 @@ export default function AdminApp() {
               <div className="appointment-list">
                 {scheduled.map((appointment) => (
                   <article key={appointment.id}>
-                    <time>{timeLabel(appointment.starts_at)}<small>{appointment.services?.duration_minutes} min</small></time>
+                    <time>{timeLabel(appointment.starts_at)}<small>{appointment.duration_minutes} min</small></time>
                     <div className="appointment-client"><strong>{appointment.customer_name}</strong><a href={`https://wa.me/55${appointment.customer_phone}`} target="_blank" rel="noreferrer"><Phone /> {phoneLabel(appointment.customer_phone)}</a></div>
-                    <div className="appointment-service"><small>SERVIÇO</small><strong>{appointment.services?.name}</strong><span>{appointment.barbers?.name}</span></div>
+                    <div className="appointment-service"><small>SERVIÇO</small><strong>{services.find((item) => item.id === appointment.service_id)?.name ?? appointment.service_id}</strong><span>{barbers.find((item) => item.id === appointment.barber_id)?.name ?? appointment.barber_id}</span></div>
                     <div className="appointment-actions">
                       <button title="Concluir" onClick={() => updateStatus(appointment.id, "completed")}><Check /></button>
                       <button title="Não compareceu" onClick={() => updateStatus(appointment.id, "no_show")}><UserRound /></button>
@@ -354,7 +354,7 @@ export default function AdminApp() {
           </section>
 
           <section className="availability-card" id="disponibilidade">
-            <div className="admin-section-title"><div><p>VISÃO OPERACIONAL</p><h2>Livres e ocupados</h2></div></div>
+            <div className="admin-section-title"><div><p>VISÃO OPERACIONAL</p><h2>Livres e ocupados</h2></div><button type="button" onClick={initialize} disabled={initializing}>{initializing ? <LoaderCircle className="spin" /> : <Clock3 />} Atualizar 90 dias</button></div>
             <div className="availability-filters">
               <label>Profissional<select value={scheduleBarber} onChange={(event) => setScheduleBarber(event.target.value)}>{barbers.map((barber) => <option value={barber.id} key={barber.id}>{barber.name}</option>)}</select></label>
               <label>Serviço<select value={scheduleService} onChange={(event) => setScheduleService(event.target.value)}>{services.map((service) => <option value={service.id} key={service.id}>{service.name}</option>)}</select></label>
@@ -365,10 +365,10 @@ export default function AdminApp() {
                   const appointment = slotLookup.get(slot.slot_label);
                   const block = blocks.find((item) => item.barber_id === scheduleBarber && slot.slot_start >= item.starts_at && slot.slot_start < item.ends_at);
                   return (
-                    <div className={slot.available ? "free" : block ? "blocked" : "busy"} key={slot.slot_start}>
+                    <button type="button" disabled={!slot.available} onClick={() => setAdminSlot(slot)} className={slot.available ? "free" : block ? "blocked" : "busy"} key={slot.slot_start}>
                       <strong>{slot.slot_label}</strong>
-                      <small>{slot.available ? "Livre" : block ? "Bloqueado" : appointment?.customer_name ?? "Ocupado"}</small>
-                    </div>
+                      <small>{slot.available ? "Agendar" : block ? "Bloqueado" : appointment?.customer_name ?? "Ocupado"}</small>
+                    </button>
                   );
                 })}
               </div>
@@ -396,6 +396,19 @@ export default function AdminApp() {
             <label>Motivo<input type="text" value={blockReason} maxLength={120} onChange={(event) => setBlockReason(event.target.value)} required /></label>
             <p><ShieldCheck /> O sistema impedirá bloqueios sobre agendamentos existentes.</p>
             <button type="submit"><Ban /> Criar bloqueio <ArrowRight /></button>
+          </form>
+        </div>
+      )}
+
+      {adminSlot && (
+        <div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-title">
+          <button className="admin-modal-backdrop" onClick={() => setAdminSlot(null)} aria-label="Fechar" />
+          <form onSubmit={createAdminBooking}>
+            <header><div><p>NOVO AGENDAMENTO</p><h2 id="appointment-title">Agendar {adminSlot.slot_label}</h2></div><button type="button" onClick={() => setAdminSlot(null)}><X /></button></header>
+            <label>Cliente<input type="text" value={adminCustomerName} minLength={2} maxLength={80} onChange={(event) => setAdminCustomerName(event.target.value)} required /></label>
+            <label>WhatsApp<input type="tel" value={adminCustomerPhone} minLength={10} maxLength={20} onChange={(event) => setAdminCustomerPhone(event.target.value)} required /></label>
+            <p><ShieldCheck /> A reserva usa a mesma transação atômica do agendamento público.</p>
+            <button type="submit"><CalendarDays /> Criar agendamento <ArrowRight /></button>
           </form>
         </div>
       )}

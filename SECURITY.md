@@ -4,10 +4,8 @@ Não abra issue pública contendo dados pessoais, tokens ou credenciais. Revogue
 
 ## Nunca commitar
 
-- `service_role`, `sb_secret_*` ou JWT secret;
-- senha do banco;
+- service account, private key ou token privilegiado;
 - senha administrativa;
 - `.env.local` ou exportações de usuários/agendamentos.
 
-O navegador deve receber somente a URL do projeto e a publishable key. A autorização administrativa depende da sessão Supabase e da allowlist `admin_users`.
-
+O navegador recebe somente a configuração pública do Firebase Web SDK. A autorização administrativa depende do Firebase Authentication e da coleção privada `admins` protegida por Security Rules.
