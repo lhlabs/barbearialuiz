@@ -299,7 +299,7 @@ export default function AdminApp() {
         <nav>
           <a className="active" href="#agenda"><LayoutDashboard /> Agenda</a>
           <a href="#disponibilidade"><Clock3 /> Disponibilidade</a>
-          <Link href="/" target="_blank"><Scissors /> Ver site <ArrowRight /></Link>
+          <Link href="/" target="_blank" rel="noreferrer"><Scissors /> Ver site <ArrowRight /></Link>
         </nav>
         <button type="button" onClick={logout}><LogOut /> Sair</button>
       </aside>

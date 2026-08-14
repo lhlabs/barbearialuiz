@@ -41,3 +41,12 @@ test("database migration includes non-negotiable security invariants", async () 
   assert.match(sql, /set search_path = pg_catalog, public/);
 });
 
+test("admin sessions are tab-scoped and production HTML receives a CSP", async () => {
+  const client = await readFile(path.join(root, "lib/supabase.ts"), "utf8");
+  const layout = await readFile(path.join(root, "app/layout.tsx"), "utf8");
+  assert.match(client, /window\.sessionStorage/);
+  assert.doesNotMatch(client, /window\.localStorage/);
+  assert.match(layout, /Content-Security-Policy/);
+  assert.match(layout, /object-src 'none'/);
+  assert.match(layout, /connect-src 'self' https:\/\/yhfndzlfkjzpxerkmdcd\.supabase\.co/);
+});

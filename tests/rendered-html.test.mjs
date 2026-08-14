@@ -56,6 +56,7 @@ test("renders public and unauthenticated admin routes without private data", asy
   assert.match(await publicResponse.text(), /Seu estilo/);
   assert.equal(adminResponse.status, 200);
   const adminHtml = await adminResponse.text();
-  assert.match(adminHtml, /AdminApp/);
+  assert.match(adminHtml, /Validando acesso seguro/);
+  assert.match(adminHtml, /noindex, nofollow/);
   assert.doesNotMatch(adminHtml, /customer_phone|customer_name|Próximos atendimentos/);
 });
