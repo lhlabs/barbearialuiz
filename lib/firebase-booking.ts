@@ -15,7 +15,12 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
-import { isPlausibleBrazilianMobile, normalizeBrazilianPhone } from "./booking-security";
+import {
+  isPlausibleBrazilianMobile,
+  normalizeBrazilianPhone,
+  registerBookingAttempt,
+  registerBookingSuccess,
+} from "./booking-security";
 import { auth, db } from "./firebase";
 
 export type Service = {
@@ -87,6 +92,7 @@ export const defaultAvailability: WeeklyAvailability = {
 
 const SLOT_INTERVAL = 15;
 const BRAZIL_OFFSET = "-03:00";
+const serverAbuseGuardEnabled = process.env.NEXT_PUBLIC_FIREBASE_ABUSE_GUARD_ENABLED === "true";
 
 function localIso(date: string, minute: number) {
   const hour = Math.floor(minute / 60).toString().padStart(2, "0");
@@ -195,6 +201,7 @@ export async function createBooking(input: BookingInput) {
   if (customerName.length < 2 || customerName.length > 80) throw new Error("invalid-input");
   if (!isPlausibleBrazilianMobile(customerPhone)) throw new Error("invalid-phone");
   if (source !== "admin" && !input.consent) throw new Error("invalid-input");
+  if (source === "public") registerBookingAttempt();
 
   const appointmentId = randomId();
   const referenceCode = randomId(4).toUpperCase();
@@ -204,8 +211,10 @@ export async function createBooking(input: BookingInput) {
   const appointmentRef = doc(db, "appointments", appointmentId);
   const slotIds = cellMinutes.map((minute) => slotId(input.date, input.barberId, minute));
   const cellRefs = slotIds.map((id) => doc(db, "slots", id));
-  const bookingCounterId = source === "public" ? `${customerPhone}_${input.date}` : "admin";
-  const bookingCounterRef = source === "public" ? doc(db, "publicBookingCounters", bookingCounterId) : null;
+  const bookingCounterId = `${customerPhone}_${input.date}`;
+  const bookingCounterRef = source === "public" && serverAbuseGuardEnabled
+    ? doc(db, "publicBookingCounters", bookingCounterId)
+    : null;
 
   await runTransaction(db, async (transaction) => {
     const cellSnapshots = await Promise.all(cellRefs.map((reference) => transaction.get(reference)));
@@ -226,7 +235,7 @@ export async function createBooking(input: BookingInput) {
       consent: source === "admin" ? false : true,
       source,
       slotIds,
-      bookingCounterId,
+      ...(bookingCounterRef ? { bookingCounterId } : {}),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -247,6 +256,7 @@ export async function createBooking(input: BookingInput) {
     }
   });
 
+  if (source === "public") registerBookingSuccess();
   return { reference_code: referenceCode, starts_at: localIso(input.date, input.startMinute) };
 }
 
