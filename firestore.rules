@@ -8,7 +8,6 @@ service cloud.firestore {
 
     function isAdmin() {
       return signedIn()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
     }
 
@@ -21,7 +20,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['name', 'description', 'durationMinutes', 'priceCents', 'active', 'displayOrder', 'barberIds', 'createdAt', 'updatedAt'])
         && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
         && data.description is string && data.description.size() <= 240
-        && data.durationMinutes is int && data.durationMinutes >= 30 && data.durationMinutes <= 90
+        && data.durationMinutes is int && data.durationMinutes >= 15 && data.durationMinutes <= 90 && data.durationMinutes % 15 == 0
         && data.priceCents is int && data.priceCents >= 0 && data.priceCents <= 100000
         && data.active is bool && data.displayOrder is int
         && data.barberIds is list && data.barberIds.size() >= 1 && data.barberIds.size() <= 10
@@ -43,7 +42,7 @@ service cloud.firestore {
         && validDate(data.date)
         && data.dayStart is timestamp
         && data.barberId is string && data.barberId.size() >= 1 && data.barberId.size() <= 64
-        && data.startMinute is int && data.startMinute >= 0 && data.startMinute < 1440 && data.startMinute % 30 == 0
+        && data.startMinute is int && data.startMinute >= 0 && data.startMinute < 1440 && data.startMinute % 15 == 0
         && data.state in ['open', 'booked', 'blocked']
         && (data.appointmentId == null || (data.appointmentId is string && data.appointmentId.size() >= 20 && data.appointmentId.size() <= 80))
         && (data.blockId == null || (data.blockId is string && data.blockId.size() >= 20 && data.blockId.size() <= 80))
@@ -55,8 +54,8 @@ service cloud.firestore {
         && data.keys().hasOnly(['barberId', 'date', 'startMinute', 'endMinute', 'reason', 'createdAt', 'updatedAt'])
         && data.barberId is string && data.barberId.size() >= 1 && data.barberId.size() <= 64
         && validDate(data.date)
-        && data.startMinute is int && data.startMinute >= 0 && data.startMinute < 1440 && data.startMinute % 30 == 0
-        && data.endMinute is int && data.endMinute > data.startMinute && data.endMinute <= 1440 && data.endMinute % 30 == 0
+        && data.startMinute is int && data.startMinute >= 0 && data.startMinute < 1440 && data.startMinute % 15 == 0
+        && data.endMinute is int && data.endMinute > data.startMinute && data.endMinute <= 1440 && data.endMinute % 15 == 0
         && data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 120
         && data.createdAt is timestamp && data.updatedAt == request.time;
     }
@@ -84,23 +83,30 @@ service cloud.firestore {
         && data.dayStart is timestamp
         && data.dayStart >= request.time - duration.value(1, 'd')
         && data.dayStart <= request.time + duration.value(91, 'd')
-        && data.startMinute is int && data.startMinute >= 360 && data.startMinute <= 1290 && data.startMinute % 30 == 0
-        && data.durationMinutes is int && data.durationMinutes >= 30 && data.durationMinutes <= 90
+        && data.startMinute is int && data.startMinute >= 360 && data.startMinute <= 1290 && data.startMinute % 15 == 0
+        && data.durationMinutes is int && data.durationMinutes >= 15 && data.durationMinutes <= 90 && data.durationMinutes % 15 == 0
         && data.endMinute == data.startMinute + data.durationMinutes && data.endMinute <= 1380
+        && data.dayStart + duration.value(data.startMinute, 'm') > request.time
         && data.status == 'scheduled'
         && data.referenceCode is string && data.referenceCode.matches('^[A-F0-9]{8}$')
         && data.consent is bool && data.source in ['public', 'admin']
         && data.slotIds is list
-        && ((data.durationMinutes <= 30 && data.slotIds.size() == 1)
-          || (data.durationMinutes > 30 && data.durationMinutes <= 60 && data.slotIds.size() == 2)
-          || (data.durationMinutes > 60 && data.slotIds.size() == 3))
+        && ((data.durationMinutes == 15 && data.slotIds.size() == 1)
+          || (data.durationMinutes == 30 && data.slotIds.size() == 2)
+          || (data.durationMinutes == 45 && data.slotIds.size() == 3)
+          || (data.durationMinutes == 60 && data.slotIds.size() == 4)
+          || (data.durationMinutes == 75 && data.slotIds.size() == 5)
+          || (data.durationMinutes == 90 && data.slotIds.size() == 6))
         && data.createdAt == request.time && data.updatedAt == request.time
         && serviceDoc.data.active == true && serviceDoc.data.durationMinutes == data.durationMinutes
         && barber.data.active == true && data.barberId in serviceDoc.data.barberIds
         && ((data.source == 'public' && data.consent == true) || (data.source == 'admin' && isAdmin()))
         && bookedCell(data.slotIds[0], data.date, data.dayStart, data.barberId, data.startMinute, appointmentId)
-        && (data.durationMinutes <= 30 || bookedCell(data.slotIds[1], data.date, data.dayStart, data.barberId, data.startMinute + 30, appointmentId))
-        && (data.durationMinutes <= 60 || bookedCell(data.slotIds[2], data.date, data.dayStart, data.barberId, data.startMinute + 60, appointmentId));
+        && (data.durationMinutes <= 15 || bookedCell(data.slotIds[1], data.date, data.dayStart, data.barberId, data.startMinute + 15, appointmentId))
+        && (data.durationMinutes <= 30 || bookedCell(data.slotIds[2], data.date, data.dayStart, data.barberId, data.startMinute + 30, appointmentId))
+        && (data.durationMinutes <= 45 || bookedCell(data.slotIds[3], data.date, data.dayStart, data.barberId, data.startMinute + 45, appointmentId))
+        && (data.durationMinutes <= 60 || bookedCell(data.slotIds[4], data.date, data.dayStart, data.barberId, data.startMinute + 60, appointmentId))
+        && (data.durationMinutes <= 75 || bookedCell(data.slotIds[5], data.date, data.dayStart, data.barberId, data.startMinute + 75, appointmentId));
     }
 
     function validPublicSlotBooking(data, slotId) {
@@ -115,7 +121,7 @@ service cloud.firestore {
         && appointment.data.date == data.date && appointment.data.dayStart == data.dayStart && appointment.data.barberId == data.barberId
         && data.startMinute >= appointment.data.startMinute
         && data.startMinute < appointment.data.endMinute
-        && (data.startMinute - appointment.data.startMinute) % 30 == 0;
+        && (data.startMinute - appointment.data.startMinute) % 15 == 0;
     }
 
     match /services/{serviceId} {
@@ -137,7 +143,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasAll(['timezone', 'slotIntervalMinutes', 'bookingHorizonDays', 'weeklyAvailability', 'updatedAt'])
         && request.resource.data.keys().hasOnly(['timezone', 'slotIntervalMinutes', 'bookingHorizonDays', 'weeklyAvailability', 'updatedAt'])
         && request.resource.data.timezone == 'America/Sao_Paulo'
-        && request.resource.data.slotIntervalMinutes == 30
+        && request.resource.data.slotIntervalMinutes == 15
         && request.resource.data.bookingHorizonDays is int
         && request.resource.data.bookingHorizonDays >= 1
         && request.resource.data.bookingHorizonDays <= 90

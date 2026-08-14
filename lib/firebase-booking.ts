@@ -83,7 +83,7 @@ export const defaultAvailability: WeeklyAvailability = {
   "6": [{ start: "09:00", end: "17:00" }],
 };
 
-const SLOT_INTERVAL = 30;
+const SLOT_INTERVAL = 15;
 const BRAZIL_OFFSET = "-03:00";
 
 function localIso(date: string, minute: number) {
@@ -148,19 +148,27 @@ export async function loadCatalog() {
 }
 
 export async function loadAvailableSlots(date: string, service: Service, barberId: string, includeUnavailable = false) {
-  const snapshot = await getDocs(query(collection(db, "slots"), where("date", "==", date)));
+  const snapshot = await getDocs(query(
+    collection(db, "slots"),
+    where("date", "==", date),
+    where("barberId", "==", barberId),
+  ));
   const cells = new Map<number, string>();
   snapshot.docs.forEach((item) => {
     const data = item.data();
-    if (data.barberId === barberId) cells.set(Number(data.startMinute), String(data.state));
+    cells.set(Number(data.startMinute), String(data.state));
   });
+  const now = Date.now();
   return [...cells.entries()]
     .sort(([a], [b]) => a - b)
     .map(([start, state]) => {
-      const available = state === "open" && occupiedMinutes(start, service.duration_minutes).every((minute) => cells.get(minute) === "open");
+      const slotStart = localIso(date, start);
+      const available = new Date(slotStart).getTime() > now
+        && state === "open"
+        && occupiedMinutes(start, service.duration_minutes).every((minute) => cells.get(minute) === "open");
       return {
-        slot_start: localIso(date, start),
-        slot_label: localIso(date, start).slice(11, 16),
+        slot_start: slotStart,
+        slot_label: slotStart.slice(11, 16),
         start_minute: start,
         available,
         state: state as Slot["state"],
@@ -344,13 +352,20 @@ const seedServices = [
   { id: "corte-assinatura", name: "Corte Assinatura", description: "Corte personalizado, acabamento e finalização.", durationMinutes: 45, priceCents: 6500, displayOrder: 1 },
   { id: "barba-ritual", name: "Barba Ritual", description: "Toalha quente, desenho e cuidado completo.", durationMinutes: 30, priceCents: 4500, displayOrder: 2 },
   { id: "combo-reserva", name: "Combo Reserva", description: "Corte e barba em uma experiência completa.", durationMinutes: 75, priceCents: 10000, displayOrder: 3 },
+  { id: "acabamento", name: "Acabamento", description: "Contorno, nuca e costeletas.", durationMinutes: 15, priceCents: 2500, displayOrder: 4 },
+];
+
+const seedBarbers = [
+  { id: "caio", name: "Caio", bio: "Clássicos e acabamento de precisão.", displayOrder: 1 },
+  { id: "rafael", name: "Rafael", bio: "Degradês contemporâneos e consultoria de estilo.", displayOrder: 2 },
+  { id: "breno", name: "Breno", bio: "Barbas, texturas e visuais de baixa manutenção.", displayOrder: 3 },
 ];
 
 export async function initializeBusinessData(days = 90) {
-  const barberId = "breno";
+  const barberIds = seedBarbers.map((barber) => barber.id);
   await Promise.all([
-    setDoc(doc(db, "barbers", barberId), { name: "Breno", bio: "Barbas & texturas", active: true, displayOrder: 1, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true }),
-    ...seedServices.map((service) => setDoc(doc(db, "services", service.id), { name: service.name, description: service.description, durationMinutes: service.durationMinutes, priceCents: service.priceCents, displayOrder: service.displayOrder, barberIds: [barberId], active: true, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })),
+    ...seedBarbers.map((barber) => setDoc(doc(db, "barbers", barber.id), { name: barber.name, bio: barber.bio, active: true, displayOrder: barber.displayOrder, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })),
+    ...seedServices.map((service) => setDoc(doc(db, "services", service.id), { name: service.name, description: service.description, durationMinutes: service.durationMinutes, priceCents: service.priceCents, displayOrder: service.displayOrder, barberIds, active: true, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })),
     setDoc(doc(db, "settings", "general"), { timezone: "America/Sao_Paulo", slotIntervalMinutes: SLOT_INTERVAL, bookingHorizonDays: days, weeklyAvailability: defaultAvailability, updatedAt: serverTimestamp() }, { merge: true }),
   ]);
 
@@ -365,9 +380,11 @@ export async function initializeBusinessData(days = 90) {
     const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset, 12);
     const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     for (const range of defaultAvailability[String(date.getDay())] ?? []) {
-      for (let minute = minuteFromTime(range.start); minute < minuteFromTime(range.end); minute += SLOT_INTERVAL) {
-        const id = slotId(dateKey, barberId, minute);
-        if (!existingIds.has(id)) writes.push({ id, data: { date: dateKey, dayStart: Timestamp.fromDate(new Date(`${dateKey}T00:00:00${BRAZIL_OFFSET}`)), barberId, startMinute: minute, state: "open", appointmentId: null, blockId: null, updatedAt: serverTimestamp() } });
+      for (const barberId of barberIds) {
+        for (let minute = minuteFromTime(range.start); minute < minuteFromTime(range.end); minute += SLOT_INTERVAL) {
+          const id = slotId(dateKey, barberId, minute);
+          if (!existingIds.has(id)) writes.push({ id, data: { date: dateKey, dayStart: Timestamp.fromDate(new Date(`${dateKey}T00:00:00${BRAZIL_OFFSET}`)), barberId, startMinute: minute, state: "open", appointmentId: null, blockId: null, updatedAt: serverTimestamp() } });
+        }
       }
     }
   }
