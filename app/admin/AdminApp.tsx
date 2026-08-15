@@ -236,7 +236,7 @@ export default function AdminApp() {
     setActionError("");
     try {
       await initializeBusinessData();
-      setActionSuccess("Catálogo e próximos 90 dias criados.");
+      setActionSuccess("Catálogo e próximos 90 dias atualizados.");
       await loadAdminData();
     } catch {
       setActionError("Não foi possível inicializar os dados.");
@@ -277,8 +277,8 @@ export default function AdminApp() {
   }).format(new Date(`${selectedDate}T12:00:00`));
 
   const slotLookup = useMemo(
-    () => new Map(appointments.map((item) => [timeLabel(item.starts_at), item])),
-    [appointments],
+    () => new Map(scheduled.map((item) => [`${item.barber_id}:${item.start_minute}`, item])),
+    [scheduled],
   );
 
   if (authorized === null || (session && authorized === null)) {
@@ -347,7 +347,7 @@ export default function AdminApp() {
             <article><span><Clock3 /></span><div><strong>{slots.filter((slot) => slot.available).length}</strong><small>horários livres*</small></div></article>
             <article><span><Ban /></span><div><strong>{blocks.length}</strong><small>bloqueios</small></div></article>
           </section>
-          <p className="metric-note">* Conforme serviço e profissional selecionados abaixo.</p>
+          <p className="metric-note">* Considera a duração do serviço e o profissional selecionados abaixo.</p>
 
           <section className="agenda-card">
             <div className="admin-section-title"><div><p>AGENDA DO DIA</p><h2>Próximos atendimentos</h2></div>{services.length === 0 ? <button type="button" onClick={initialize} disabled={initializing}>{initializing ? <LoaderCircle className="spin" /> : <Scissors />} Inicializar agenda</button> : <button type="button" onClick={() => setShowBlockForm(true)}><Ban /> Bloquear horário</button>}</div>
@@ -382,12 +382,21 @@ export default function AdminApp() {
             {slotsLoading ? <div className="admin-empty"><LoaderCircle className="spin" /></div> : (
               <div className="admin-slot-grid">
                 {slots.map((slot) => {
-                  const appointment = slotLookup.get(slot.slot_label);
-                  const block = blocks.find((item) => item.barber_id === scheduleBarber && slot.slot_start >= item.starts_at && slot.slot_start < item.ends_at);
+                  const appointment = slotLookup.get(`${scheduleBarber}:${slot.start_minute}`);
+                  const block = blocks.find((item) => item.barber_id === scheduleBarber && item.start_minute <= slot.start_minute && slot.start_minute < item.end_minute);
+                  const blocked = slot.state === "blocked" || Boolean(block);
+                  const booked = slot.state === "booked";
+                  const label = slot.available
+                    ? "Agendar"
+                    : blocked
+                      ? "Bloqueado"
+                      : booked
+                        ? appointment?.customer_name ?? "Reservado"
+                        : "Sem janela para este serviço";
                   return (
-                    <button type="button" disabled={!slot.available} onClick={() => setAdminSlot(slot)} className={slot.available ? "free" : block ? "blocked" : "busy"} key={slot.slot_start}>
+                    <button type="button" disabled={!slot.available} onClick={() => setAdminSlot(slot)} className={slot.available ? "free" : blocked ? "blocked" : "busy"} key={slot.slot_start}>
                       <strong>{slot.slot_label}</strong>
-                      <small>{slot.available ? "Agendar" : block ? "Bloqueado" : appointment?.customer_name ?? "Ocupado"}</small>
+                      <small>{label}</small>
                     </button>
                   );
                 })}
