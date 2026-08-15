@@ -87,7 +87,7 @@ export const defaultAvailability: WeeklyAvailability = {
   "3": [{ start: "09:00", end: "19:00" }],
   "4": [{ start: "09:00", end: "19:00" }],
   "5": [{ start: "09:00", end: "19:00" }],
-  "6": [{ start: "09:00", end: "17:00" }],
+  "6": [{ start: "09:00", end: "19:00" }],
 };
 
 const SLOT_INTERVAL = 15;
@@ -385,10 +385,21 @@ const seedBarbers = [
 
 export async function initializeBusinessData(days = 90) {
   const barberIds = seedBarbers.map((barber) => barber.id);
+  const settingsRef = doc(db, "settings", "general");
+  const existingSettings = await getDoc(settingsRef);
+  const storedAvailability = existingSettings.data()?.weeklyAvailability as WeeklyAvailability | undefined;
+  const availability = storedAvailability ?? defaultAvailability;
+
   await Promise.all([
     ...seedBarbers.map((barber) => setDoc(doc(db, "barbers", barber.id), { name: barber.name, bio: barber.bio, active: true, displayOrder: barber.displayOrder, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })),
     ...seedServices.map((service) => setDoc(doc(db, "services", service.id), { name: service.name, description: service.description, durationMinutes: service.durationMinutes, priceCents: service.priceCents, displayOrder: service.displayOrder, barberIds, active: true, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })),
-    setDoc(doc(db, "settings", "general"), { timezone: "America/Sao_Paulo", slotIntervalMinutes: SLOT_INTERVAL, bookingHorizonDays: days, weeklyAvailability: defaultAvailability, updatedAt: serverTimestamp() }, { merge: true }),
+    setDoc(settingsRef, {
+      timezone: "America/Sao_Paulo",
+      slotIntervalMinutes: SLOT_INTERVAL,
+      bookingHorizonDays: days,
+      weeklyAvailability: availability,
+      updatedAt: serverTimestamp(),
+    }, { merge: true }),
   ]);
 
   const writes: Array<{ id: string; data: Record<string, unknown> }> = [];
@@ -401,7 +412,7 @@ export async function initializeBusinessData(days = 90) {
   for (let offset = 0; offset < days; offset += 1) {
     const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset, 12);
     const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    for (const range of defaultAvailability[String(date.getDay())] ?? []) {
+    for (const range of availability[String(date.getDay())] ?? []) {
       for (const barberId of barberIds) {
         for (let minute = minuteFromTime(range.start); minute < minuteFromTime(range.end); minute += SLOT_INTERVAL) {
           const id = slotId(dateKey, barberId, minute);
