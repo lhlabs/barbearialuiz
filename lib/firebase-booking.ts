@@ -90,6 +90,16 @@ export const defaultAvailability: WeeklyAvailability = {
   "6": [{ start: "09:00", end: "19:00" }],
 };
 
+const LEGACY_DEFAULT_AVAILABILITY: WeeklyAvailability = {
+  "0": [],
+  "1": [{ start: "09:00", end: "19:00" }],
+  "2": [{ start: "09:00", end: "19:00" }],
+  "3": [{ start: "09:00", end: "19:00" }],
+  "4": [{ start: "09:00", end: "19:00" }],
+  "5": [{ start: "09:00", end: "19:00" }],
+  "6": [{ start: "09:00", end: "17:00" }],
+};
+
 const SLOT_INTERVAL = 15;
 const BRAZIL_OFFSET = "-03:00";
 const serverAbuseGuardEnabled = process.env.NEXT_PUBLIC_FIREBASE_ABUSE_GUARD_ENABLED === "true";
@@ -388,7 +398,10 @@ export async function initializeBusinessData(days = 90) {
   const settingsRef = doc(db, "settings", "general");
   const existingSettings = await getDoc(settingsRef);
   const storedAvailability = existingSettings.data()?.weeklyAvailability as WeeklyAvailability | undefined;
-  const availability = storedAvailability ?? defaultAvailability;
+  const usesLegacyDefault = storedAvailability
+    ? JSON.stringify(storedAvailability) === JSON.stringify(LEGACY_DEFAULT_AVAILABILITY)
+    : false;
+  const availability = !storedAvailability || usesLegacyDefault ? defaultAvailability : storedAvailability;
 
   await Promise.all([
     ...seedBarbers.map((barber) => setDoc(doc(db, "barbers", barber.id), { name: barber.name, bio: barber.bio, active: true, displayOrder: barber.displayOrder, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })),
