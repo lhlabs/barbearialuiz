@@ -44,7 +44,7 @@ test("Firestore rules are deny-by-default and protect personal data", async () =
   assert.match(rules, /allow read, write: if false/);
 });
 
-test("booking is transactional, throttled and validates Brazilian mobile numbers", async () => {
+test("booking is transactional, throttled and uses one consistent start-time window", async () => {
   const booking = await readFile(path.join(root, "lib/firebase-booking.ts"), "utf8");
   const guard = await readFile(path.join(root, "lib/booking-security.ts"), "utf8");
   const client = await readFile(path.join(root, "lib/firebase.ts"), "utf8");
@@ -55,6 +55,13 @@ test("booking is transactional, throttled and validates Brazilian mobile numbers
   assert.match(booking, /registerBookingAttempt/);
   assert.match(booking, /registerBookingSuccess/);
   assert.match(booking, /const SLOT_INTERVAL = 15/);
+  assert.match(booking, /const MAX_SERVICE_DURATION = 90/);
+  assert.match(booking, /function isBookableStart/);
+  assert.match(booking, /filter\(\(\[start\]\) => isBookableStart\(date, start, availability\)\)/);
+  assert.match(booking, /if \(!isBookableStart\(input\.date, input\.startMinute, availability\)\) throw new Error\("invalid-slot"\)/);
+  assert.match(booking, /supportEndExclusive = minuteFromTime\(range\.end\) \+ MAX_SERVICE_DURATION - SLOT_INTERVAL/);
+  assert.match(booking, /availabilityEquals\(storedAvailability, LEGACY_DEFAULT_AVAILABILITY\)/);
+  assert.match(booking, /"6": \[\{ start: "09:00", end: "19:00" \}\]/);
   assert.match(booking, /where\("barberId", "==", barberId\)/);
   assert.match(booking, /id: "acabamento"/);
   assert.match(booking, /id: "caio"/);
