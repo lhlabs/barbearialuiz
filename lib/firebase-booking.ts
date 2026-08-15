@@ -101,6 +101,7 @@ const LEGACY_DEFAULT_AVAILABILITY: WeeklyAvailability = {
 };
 
 const SLOT_INTERVAL = 15;
+const MAX_SERVICE_DURATION = 90;
 const BRAZIL_OFFSET = "-03:00";
 const serverAbuseGuardEnabled = process.env.NEXT_PUBLIC_FIREBASE_ABUSE_GUARD_ENABLED === "true";
 
@@ -121,6 +122,27 @@ function slotId(date: string, barberId: string, minute: number) {
 
 function occupiedMinutes(start: number, duration: number) {
   return Array.from({ length: Math.ceil(duration / SLOT_INTERVAL) }, (_, index) => start + index * SLOT_INTERVAL);
+}
+
+function dayOfWeek(date: string) {
+  return String(new Date(`${date}T12:00:00${BRAZIL_OFFSET}`).getDay());
+}
+
+function isBookableStart(date: string, minute: number, availability: WeeklyAvailability) {
+  return (availability[dayOfWeek(date)] ?? []).some((range) => {
+    const rangeStart = minuteFromTime(range.start);
+    const rangeEnd = minuteFromTime(range.end);
+    return minute >= rangeStart && minute < rangeEnd;
+  });
+}
+
+function availabilityEquals(left: WeeklyAvailability, right: WeeklyAvailability) {
+  return ["0", "1", "2", "3", "4", "5", "6"].every((day) => {
+    const leftRanges = left[day] ?? [];
+    const rightRanges = right[day] ?? [];
+    return leftRanges.length === rightRanges.length
+      && leftRanges.every((range, index) => range.start === rightRanges[index]?.start && range.end === rightRanges[index]?.end);
+  });
 }
 
 function randomId(bytes = 16) {
@@ -162,11 +184,15 @@ export async function loadCatalog() {
 }
 
 export async function loadAvailableSlots(date: string, service: Service, barberId: string, includeUnavailable = false) {
-  const snapshot = await getDocs(query(
-    collection(db, "slots"),
-    where("date", "==", date),
-    where("barberId", "==", barberId),
-  ));
+  const [snapshot, settingsDoc] = await Promise.all([
+    getDocs(query(
+      collection(db, "slots"),
+      where("date", "==", date),
+      where("barberId", "==", barberId),
+    )),
+    getDoc(doc(db, "settings", "general")),
+  ]);
+  const availability = (settingsDoc.data()?.weeklyAvailability ?? defaultAvailability) as WeeklyAvailability;
   const cells = new Map<number, string>();
   snapshot.docs.forEach((item) => {
     const data = item.data();
@@ -174,6 +200,7 @@ export async function loadAvailableSlots(date: string, service: Service, barberI
   });
   const now = Date.now();
   return [...cells.entries()]
+    .filter(([start]) => isBookableStart(date, start, availability))
     .sort(([a], [b]) => a - b)
     .map(([start, state]) => {
       const slotStart = localIso(date, start);
@@ -212,6 +239,10 @@ export async function createBooking(input: BookingInput) {
   if (!isPlausibleBrazilianMobile(customerPhone)) throw new Error("invalid-phone");
   if (source !== "admin" && !input.consent) throw new Error("invalid-input");
   if (source === "public") registerBookingAttempt();
+
+  const settingsDoc = await getDoc(doc(db, "settings", "general"));
+  const availability = (settingsDoc.data()?.weeklyAvailability ?? defaultAvailability) as WeeklyAvailability;
+  if (!isBookableStart(input.date, input.startMinute, availability)) throw new Error("invalid-slot");
 
   const appointmentId = randomId();
   const referenceCode = randomId(4).toUpperCase();
@@ -398,9 +429,7 @@ export async function initializeBusinessData(days = 90) {
   const settingsRef = doc(db, "settings", "general");
   const existingSettings = await getDoc(settingsRef);
   const storedAvailability = existingSettings.data()?.weeklyAvailability as WeeklyAvailability | undefined;
-  const usesLegacyDefault = storedAvailability
-    ? JSON.stringify(storedAvailability) === JSON.stringify(LEGACY_DEFAULT_AVAILABILITY)
-    : false;
+  const usesLegacyDefault = storedAvailability ? availabilityEquals(storedAvailability, LEGACY_DEFAULT_AVAILABILITY) : false;
   const availability = !storedAvailability || usesLegacyDefault ? defaultAvailability : storedAvailability;
 
   await Promise.all([
@@ -427,7 +456,8 @@ export async function initializeBusinessData(days = 90) {
     const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     for (const range of availability[String(date.getDay())] ?? []) {
       for (const barberId of barberIds) {
-        for (let minute = minuteFromTime(range.start); minute < minuteFromTime(range.end); minute += SLOT_INTERVAL) {
+        const supportEndExclusive = minuteFromTime(range.end) + MAX_SERVICE_DURATION - SLOT_INTERVAL;
+        for (let minute = minuteFromTime(range.start); minute < supportEndExclusive; minute += SLOT_INTERVAL) {
           const id = slotId(dateKey, barberId, minute);
           if (!existingIds.has(id)) writes.push({ id, data: { date: dateKey, dayStart: Timestamp.fromDate(new Date(`${dateKey}T00:00:00${BRAZIL_OFFSET}`)), barberId, startMinute: minute, state: "open", appointmentId: null, blockId: null, updatedAt: serverTimestamp() } });
         }
